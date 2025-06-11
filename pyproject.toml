@@ -1,0 +1,30 @@
+[project]
+name = "regenradar"
+version = "0.1.0"
+description = "Generate a precipitation radar film for Germany from OpenStreetMap maps and DWD data."
+authors = [
+    { name = "schnusch" },
+]
+license = "AGPL-3.0-or-later"
+license-files = ["COPYING.md"]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "aiohttp",
+    "importlib_resources",
+    "selenium",
+]
+
+[project.scripts]
+regenradar = "regenradar.map:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["regenradar*"]
+
+[tool.setuptools.package-data]
+"regenradar.html" = ["map.html"]

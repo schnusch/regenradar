@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""></script>
+    <style>
+      .leaflet-attribution-flag {
+        display: none !important;
+      }
+      .legend {
+        background: white;
+        padding: 4px;
+      }
+      .legend > img {
+        display: block;
+      }
+      .time-label {
+        font-family: sans-serif;
+        font-size: 32px;
+        color: white;
+        background: black;
+        padding: 0 .3em;
+        /* text-shadow: -1px 0 black, 0 1px black, 1px 0 black, 0 -1px black; */
+      }
+    </style>
+    <script>
+        "use strict";
+
+        const datetime = new Intl.DateTimeFormat("de-DE", {
+            timeZone: "Europe/Berlin",
+            dateStyle: "long",
+            timeStyle: "long",
+        });
+
+        async function load_map(t, bounds, center, radius, options) {
+            const rounded_t = new Date(t.getTime() - (t.getTime() % 300_000));
+
+            const osm_layer = L.tileLayer("https://tile.osmand.net/hd/{z}/{x}/{y}.png", {
+                maxZoom: 19,
+                attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>, <a href="https://osmand.net/">OsmAnd</a>',
+            });
+            const dwd_layer = L.tileLayer.wms("https://maps.dwd.de/geoserver/dwd/ows", {
+                attribution: '<a href="https://www.dwd.de/">DWD</a>',
+                version: "1.3.0",
+                layers: "dwd:Niederschlagsradar",
+                format: "image/png",
+                transparent: true,
+                time: rounded_t.toISOString(),
+            });
+            dwd_layer.setOpacity(options.opacity ?? 1);
+
+            const time_label = L.control({position: "bottomleft"});
+            time_label.onAdd = () => {
+                const span = L.DomUtil.create("span");
+                span.classList.add("time-label");
+                span.appendChild(
+                    document.createTextNode(
+                        datetime.format(rounded_t)
+                    )
+                );
+                return span;
+            };
+
+            const map_elem = document.body.appendChild(document.createElement("div"));
+            map_elem.style.width = `${options?.width ?? 1080}px`;
+            map_elem.style.height = `${options?.height ?? 1080}px`;
+            const map = L.map(map_elem, {
+                zoomControl: false,
+                zoomAnimation: false,
+                fadeAnimation: false,
+            });
+            time_label.addTo(map);
+
+            // prepare promises
+            const focus_map = new Promise(async (resolve, _) => {
+                if(bounds === null) {
+                    // focus map using a circle
+                    L.marker(center).addTo(map);
+                    const circle = L.circle(center, {radius: radius, stroke: false});
+                    map.fitWorld();
+                    bounds = await new Promise((resolve, _) => {
+                        circle.on("add", () => {
+                            resolve(circle.getBounds());
+                            circle.removeFrom(map);
+                        });
+                        circle.addTo(map);
+                    });
+                }
+                map.fitBounds(bounds),
+                resolve();
+            });
+            const load_layers = Promise.all(
+                [osm_layer, dwd_layer].map(
+                    (layer) => new Promise((resolve, reject) => {
+                        layer.on("load", resolve);
+                        layer.on("tileloaderror", reject);
+                        layer.addTo(map);
+                    })
+                )
+            );
+            const load_legend = new Promise((resolve, _) => {
+                let src = "https://maps.dwd.de/geoserver/ows?service=WMS";
+                const parameters = {
+                    request: "GetLegendGraphic",
+                    version: "1.3.0",
+                    layer: "dwd:Niederschlagsradar",
+                    format: "image/png",
+                    transparent: true,
+                    width: 20,
+                    height: 20,
+                    time: rounded_t.toISOString(),
+                };
+                for(const k of Object.keys(parameters)) {
+                    src += "&" + k + "=" + encodeURIComponent(String(parameters[k]));
+                }
+
+                const legend = L.control({position: "topright"})
+                legend.onAdd = () => {
+                    const div = L.DomUtil.create("div");
+                    div.setAttribute("class", "legend");
+                    const img = div.appendChild(document.createElement("img"));
+                    img.addEventListener("load", resolve);
+                    img.setAttribute("src", src);
+                    return div;
+                };
+                legend.addTo(map);
+            });
+
+            // parallelize as much as possible
+            const [layers, _] = await Promise.all(
+                [
+                    // we want the right focus before the layer's load events
+                    focus_map.then(() => load_layers),
+                    // legend can be loaded alongside it all
+                    load_legend,
+                ]
+            );
+            return [map_elem, ...layers];
+        }
+    </script>
+  </head>
+  <body></body>
+</html>
